@@ -13,11 +13,14 @@ venv/
 
 # Enviroment Variable Files
 .env
+.env.*
+!.env.*.example
 .env.backup.*
 
 # Generated Docker Compose files (output of setup wizard)
 docker-compose.*.yml
 !docker-compose.podman.yml
+!docker-compose.lightrag-stack.yml
 
 # Build / Distribution
 dist/

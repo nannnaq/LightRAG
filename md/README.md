@@ -24,6 +24,7 @@
 | `15_二次开发指南.md` | 新增 API、解析器、存储、Provider、Prompt、WebUI 页面等开发入口。 |
 | `16_常见问题与排查.md` | 启动、端口、上传、processing、维度、LLM、Rerank、Docker、WSL 等排查命令。 |
 | `17_源码调用链路索引.md` | 按启动、上传、查询、WebUI、LLM、Embedding 等链路索引文件和函数。 |
+| `18_Docker本地开发与服务器部署手册.md` | 完整部署手册：PostgreSQL/Qdrant/Neo4j/MinerU 多模态栈、本地开发、服务器部署、镜像与 MinerU 模型清单、日志和运维。 |
 
 ## 推荐阅读路径
 
@@ -56,7 +57,8 @@ flowchart LR
 flowchart LR
   A[03 安装启动] --> B[04 配置系统]
   B --> C[12 Docker 与部署]
-  C --> D[16 常见问题]
+  C --> D[18 Docker 本地开发与服务器部署]
+  D --> E[16 常见问题]
 ```
 
 ## 学习路线建议
@@ -72,4 +74,3 @@ flowchart LR
 - 本文档没有读取或引用真实 `.env` 内容。
 - 所有 API Key、Token、密码只使用占位符，例如 `<你的 API Key>`。
 - 不要把 `.env`、运行数据、缓存目录、真实日志中的密钥提交到 Git。
-
