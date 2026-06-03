@@ -3,7 +3,7 @@
 # pre-pull and tag it with:
 #   docker pull vllm/vllm-openai:v0.11.2
 #   docker tag vllm/vllm-openai:v0.11.2 docker.m.daocloud.io/vllm/vllm-openai:v0.11.2
-FROM docker.m.daocloud.io/vllm/vllm-openai:v0.11.2
+FROM vllm/vllm-openai:v0.10.2
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
