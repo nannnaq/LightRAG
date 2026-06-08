@@ -914,17 +914,19 @@ STACK_LIGHTRAG_PORT=9621
 
 ### 12.4 构建 MinerU 镜像
 
+注意cuda版本，3090cuda是12.8，MinerU：latest最新的镜像必须是cuda12.9
+
 服务器如果能直接访问 Docker Hub：
 
 ```bash
-docker pull vllm/vllm-openai:v0.11.2
-docker tag vllm/vllm-openai:v0.11.2 docker.m.daocloud.io/vllm/vllm-openai:v0.11.2
+docker pull vllm/vllm-openai:v0.10.2
+
 ```
 
 然后构建：
 
 ```bash
-docker build -t mineru:latest -f .docker/mineru/Dockerfile .docker/mineru
+docker build --no-cache -t mineru:cuda128 -f .docker/mineru/Dockerfile .docker/mineru
 ```
 
 如果服务器不能访问外网，建议：
@@ -937,30 +939,27 @@ docker build -t mineru:latest -f .docker/mineru/Dockerfile .docker/mineru
 ### 12.5 启动完整服务
 
 ```bash
-docker compose \
-  --env-file .env.lightrag-stack \
-  -f docker-compose.lightrag-stack.yml \
-  --profile mineru \
-  up -d postgres qdrant neo4j mineru-api
+docker compose --env-file .env.lightrag-stack -f docker-compose.lightrag-stack.yml --profile mineru up -d postgres qdrant neo4j mineru-api
 ```
+
+源码启动LightRAG：
+
+```
+uv run lightrag-server
+```
+
+或者镜像启动：
 
 构建 LightRAG：
 
 ```bash
-docker compose \
-  --env-file .env.lightrag-stack \
-  -f docker-compose.lightrag-stack.yml \
-  build lightrag
+docker compose --env-file .env.lightrag-stack -f docker-compose.lightrag-stack.yml build lightrag
 ```
 
 启动 LightRAG：
 
 ```bash
-docker compose \
-  --env-file .env.lightrag-stack \
-  -f docker-compose.lightrag-stack.yml \
-  --profile mineru \
-  up -d lightrag
+docker compose --env-file .env.lightrag-stack -f docker-compose.lightrag-stack.yml --profile mineru up -d lightrag
 ```
 
 检查：
@@ -1029,6 +1028,17 @@ docker build -t mineru:latest -f .docker/mineru/Dockerfile .docker/mineru
 docker compose --env-file .env.lightrag-stack -f docker-compose.lightrag-stack.yml --profile mineru up -d mineru-api
 ```
 
+```
+#修改postgres镜像密码为123456
+docker exec -it -u postgres lightrag-stack-postgres-1 psql -d rag -c "ALTER USER postgres WITH PASSWORD '123456';"
+#重启镜像
+docker compose --env-file .env.lightrag-stack -f docker-compose.lightrag-stack.yml restart postgres lightrag
+#查看日志
+docker compose --env-file .env.lightrag-stack -f docker-compose.lightrag-stack.yml logs -f lightrag
+```
+
+
+
 ### 13.3 回滚
 
 如果服务器部署失败：
@@ -1042,147 +1052,7 @@ docker compose --env-file .env.lightrag-stack -f docker-compose.lightrag-stack.y
 
 回滚代码不会自动回滚数据库数据。如果索引结构或模型配置变更很大，先备份再操作。
 
----
 
-## 14. 常见问题
-
-### 14.1 Docker 权限不足
-
-现象：
-
-```text
-permission denied while trying to connect to the docker API
-```
-
-排查：
-
-```bash
-docker info
-ls -l /var/run/docker.sock
-id
-```
-
-WSL 下确认 Docker Desktop 已启动，并启用了当前 WSL 发行版集成。
-
-### 14.2 MinerU 能启动，但 PDF 卡很久
-
-先看 MinerU 日志：
-
-```bash
-docker compose --env-file .env.lightrag-stack \
-  -f docker-compose.lightrag-stack.yml \
-  --profile mineru \
-  logs -f mineru-api
-```
-
-如果看到：
-
-```text
-Using vllm-async-engine as the inference engine for VLM
-Starting to load model ...
-Loading safetensors checkpoint shards ...
-```
-
-说明正在首次加载模型，不是失败。首次加载可能需要数分钟。
-
-### 14.3 LightRAG 报 `Parse worker failed (mineru):`
-
-排查顺序：
-
-```bash
-curl http://127.0.0.1:8000/health
-tail -n 200 lightrag.log
-docker compose --env-file .env.lightrag-stack -f docker-compose.lightrag-stack.yml --profile mineru logs --tail=200 mineru-api
-```
-
-如果是 2 分钟左右失败，重点确认：
-
-```env
-MINERU_HTTP_TIMEOUT_SECONDS=1800
-MINERU_MAX_POLLS=900
-```
-
-改完后必须重启 LightRAG Server。
-
-### 14.4 8GB 显存处理大 PDF 不稳定
-
-建议先切轻量模式：
-
-```env
-MINERU_LOCAL_BACKEND=pipeline
-MINERU_LOCAL_IMAGE_ANALYSIS=false
-STACK_MINERU_LOCAL_BACKEND=pipeline
-STACK_MINERU_LOCAL_IMAGE_ANALYSIS=false
-```
-
-重启：
-
-```bash
-docker compose --env-file .env.lightrag-stack -f docker-compose.lightrag-stack.yml --profile mineru restart mineru-api
-uv run lightrag-server
-```
-
-如果 LightRAG 运行在容器中：
-
-```bash
-docker compose --env-file .env.lightrag-stack -f docker-compose.lightrag-stack.yml --profile mineru up -d lightrag
-```
-
-### 14.5 Neo4j APOC warning
-
-日志：
-
-```text
-APOC plugin error: There is no procedure with the name `apoc.path.subgraphAll`
-Neo4j: falling back to basic Cypher recursive search...
-```
-
-这不是致命错误。当前 `neo4j:5-community` 没有 APOC 插件时，LightRAG 会自动降级到普通 Cypher 查询。影响是复杂图遍历可能慢一些。
-
-生产环境如果图查询很重，可以后续换带 APOC 的 Neo4j 镜像或安装 APOC 插件。
-
-### 14.6 VLM 费用过高
-
-检查：
-
-```bash
-grep -E 'VLM_PROCESS_ENABLE|VLM_LLM_MODEL|MINERU_LOCAL_IMAGE_ANALYSIS' .env .env.lightrag-stack
-```
-
-临时关闭 LightRAG 侧 VLM：
-
-```env
-VLM_PROCESS_ENABLE=false
-STACK_VLM_PROCESS_ENABLE=false
-```
-
-注意：关闭后图片和表格的语义描述会变少，但 PDF 纯文本、OCR 和基础索引仍可继续验证。
-
-### 14.7 Embedding 维度变更
-
-如果从一个 embedding 模型切换到另一个 embedding 模型，不能直接复用旧 Qdrant 向量数据。原因是不同 embedding 模型的向量空间不兼容，维度也可能不同。
-
-处理方式：
-
-1. 备份旧数据。
-2. 清空 Qdrant / PostgreSQL / Neo4j 中旧索引。
-3. 使用新 embedding 模型重新上传并索引文档。
-
----
-
-## 15. 安全注意事项
-
-| 项 | 建议 |
-|---|---|
-| API Key | 只放 `.env` 或密钥管理系统，不写进镜像和 Git |
-| 数据库密码 | 服务器必须改强密码 |
-| WebUI | 生产环境开启认证或放在内网 |
-| MinerU | 不建议公网暴露 `8000` |
-| Qdrant / Neo4j / PostgreSQL | 不建议公网暴露 |
-| 日志 | 注意日志里不要打印密钥 |
-| 备份 | 备份文件也视为敏感数据 |
-
-`.docker/mineru/Dockerfile` 不包含 API Key。`docker-compose.lightrag-stack.yml` 通过挂载 `.env` 或环境变量注入密钥，避免把密钥打进镜像。
 
 ---
 
@@ -1212,17 +1082,188 @@ flowchart LR
   G --> H[上传样本文档验证 processed]
 ```
 
-### 16.3 生产上线前检查清单
+## 项目端口占用
 
-| 检查项 | 命令 / 位置 |
-|---|---|
-| Docker 服务状态 | `docker compose ... ps` |
-| LightRAG 健康 | `curl http://127.0.0.1:9621/health` |
-| MinerU 健康 | `curl http://127.0.0.1:8000/health` |
-| GPU 可见 | `docker compose ... exec mineru-api nvidia-smi` |
-| 文档可 processed | `/documents/paginated` |
-| 图谱可显示 | WebUI Graph 页面 |
-| 查询可回答 | WebUI Query 页面 |
-| 数据卷可备份 | PostgreSQL / Qdrant / Neo4j / inputs |
-| 密钥未提交 | `git status --short`、检查 `.gitignore` |
+镜像本身不占端口，容器运行后才占端口。你这套 docker-compose.lightrag-stack.yml 默认会用这些宿主机端口：
 
+  ┌─────────────────┬────────────┬──────────┬───────────┬──────────────────────────┐
+  │ 服务            │ 宿主机端口 │ 容器端口 │ 默认绑定  │ 用途                     │
+  ├─────────────────┼────────────┼──────────┼───────────┼──────────────────────────┤
+  │ LightRAG Server │       9621 │     9621 │ 0.0.0.0   │ WebUI / API / Swagger    │
+  │ PostgreSQL      │      15432 │     5432 │ 127.0.0.1 │ 文档、chunk、状态、cache │
+  │ Qdrant          │       6333 │     6333 │ 127.0.0.1 │ 向量数据库 HTTP API      │
+  │ Neo4j Browser   │       7474 │     7474 │ 127.0.0.1 │ Neo4j Web 管理页         │
+  │ Neo4j Bolt      │       7687 │     7687 │ 127.0.0.1 │ LightRAG 连接 Neo4j      │
+  │ MinerU API      │       8000 │     8000 │ 127.0.0.1 │ PDF / 图片解析           │
+  └─────────────────┴────────────┴──────────┴───────────┴──────────────────────────┘
+
+  部署前检查端口：
+
+```
+sudo ss -lntp | grep -E ':(9621|15432|6333|7474|7687|8000)\b'
+```
+
+  如果没有输出，说明这些端口当前没被占用。
+
+  如果端口被占用，主要改这个文件：
+
+  .env.lightrag-stack
+
+  对应修改项：
+
+```
+STACK_LIGHTRAG_PORT=9621
+STACK_POSTGRES_PORT=15432
+STACK_QDRANT_PORT=6333
+STACK_NEO4J_HTTP_PORT=7474
+STACK_NEO4J_BOLT_PORT=7687
+STACK_MINERU_PORT=8000
+```
+
+  例如端口冲突可以改成：
+
+```
+STACK_LIGHTRAG_PORT=19621
+STACK_POSTGRES_PORT=25432
+STACK_QDRANT_PORT=16333
+STACK_NEO4J_HTTP_PORT=17474
+STACK_NEO4J_BOLT_PORT=17687
+STACK_MINERU_PORT=18000
+```
+
+  如果你是 LightRAG 也跑在 Docker 里，只改 .env.lightrag-stack 就行，容器内部仍然用服务名互相访问。
+
+  如果你是 宿主机源码运行 uv run lightrag-server，改了端口后还要同步改 .env：
+
+```
+PORT=19621
+POSTGRES_PORT=25432
+QDRANT_URL=http://localhost:16333
+NEO4J_URI=neo4j://localhost:17687
+MINERU_LOCAL_ENDPOINT=http://127.0.0.1:18000
+```
+
+  改完后重启：
+
+```
+docker compose --env-file .env.lightrag-stack -f docker-compose.lightrag-stack.yml --profile mineru up -d
+```
+
+  如果源码方式运行，再重启：
+
+```
+uv run lightrag-server
+```
+
+### 换版本
+
+• 不能升级驱动的话，就不要再用现在这个 mineru:latest。现在这个镜像基于 CUDA 12.9，服务器只能到 CUDA 12.8，所以只能 重建
+  一个 CUDA 12.8 版 MinerU 镜像。
+
+  vLLM 官方镜像是 vllm/vllm-openai；我查到 v0.10.2 对应 CUDA 12.8，比较适合你这台服务器。参考：vLLM Docker 镜像说明和
+  v0.10.2 镜像环境信息。
+  来源：https://docs.vllm.ai/en/v0.10.2/getting_started/installation/gpu.html
+  (https://docs.vllm.ai/en/v0.10.2/getting_started/installation/gpu.html)、https://docker.aityp.com/image/docker.io/vllm/vllm-openai%3Av0.10.2
+  (https://docker.aityp.com/image/docker.io/vllm/vllm-openai%3Av0.10.2)
+
+  在服务器上这样操作。
+
+  先停掉失败的 MinerU 容器：
+
+  docker compose --env-file .env.lightrag-stack \
+    -f docker-compose.lightrag-stack.yml \
+    --profile mineru stop mineru-api
+
+  docker compose --env-file .env.lightrag-stack \
+    -f docker-compose.lightrag-stack.yml \
+    --profile mineru rm -f mineru-api
+
+  拉 CUDA 12.8 的 vLLM 基础镜像：
+
+  docker pull vllm/vllm-openai:v0.10.2
+
+  如果 Docker Hub 还是限流，就走镜像源：
+
+  docker pull docker.m.daocloud.io/vllm/vllm-openai:v0.10.2
+  docker tag docker.m.daocloud.io/vllm/vllm-openai:v0.10.2 vllm/vllm-openai:v0.10.2
+
+  确认它确实是 CUDA 12.8：
+
+  docker image inspect vllm/vllm-openai:v0.10.2 \
+    --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -Ei 'CUDA_VERSION|NVIDIA_REQUIRE_CUDA'
+
+  你应该看到类似：
+
+  CUDA_VERSION=12.8.1
+  NVIDIA_REQUIRE_CUDA=cuda>=12.8
+
+  然后改服务器上的 .docker/mineru/Dockerfile，把第一行基础镜像从 CUDA 12.9 改成 CUDA 12.8：
+
+  FROM vllm/vllm-openai:v0.10.2
+
+  如果你想继续用 DaoCloud 镜像源，也可以写成：
+
+  FROM docker.m.daocloud.io/vllm/vllm-openai:v0.10.2
+
+  重新构建 MinerU 镜像：
+
+  docker build -t mineru:cuda128 -f .docker/mineru/Dockerfile .
+  docker tag mineru:cuda128 mineru:latest
+
+  确认新的 mineru:latest 已经不是 CUDA 12.9：
+
+  docker image inspect mineru:latest \
+    --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -Ei 'CUDA_VERSION|NVIDIA_REQUIRE_CUDA|MINERU'
+
+  测试 GPU 能否进容器：
+
+  docker run --rm --gpus all --entrypoint nvidia-smi mineru:latest
+
+  如果这里能看到 GPU，再启动 MinerU：
+
+  docker compose --env-file .env.lightrag-stack \
+    -f docker-compose.lightrag-stack.yml \
+    --profile mineru up -d mineru-api
+
+  看日志：
+
+  docker compose --env-file .env.lightrag-stack \
+    -f docker-compose.lightrag-stack.yml \
+    --profile mineru logs -f mineru-api
+
+  健康检查：
+
+  curl http://127.0.0.1:8000/health
+
+  不要用 NVIDIA_DISABLE_REQUIRE=1 去强行跳过 CUDA 12.9 检查。那只是绕过启动校验，不代表 CUDA 12.9 容器真的能在 CUDA 12.8
+  驱动上稳定跑，后面更可能在 vLLM、torch、flash-attn 阶段炸。
+
+  所以你的服务器路线就是：
+
+  不能升级驱动
+  => MinerU 基础镜像降到 vllm/vllm-openai:v0.10.2
+  => 重建 mineru:latest
+  => 再启动 mineru-api
+
+  15432 端口占用先不用管，等 MinerU 镜像问题解决后再处理。
+
+
+
+
+
+### 下载到本地然后转发
+
+在网络稳定的机器上：
+
+  docker pull vllm/vllm-openai:v0.10.2
+  docker save vllm/vllm-openai:v0.10.2 -o vllm-openai-v0.10.2.tar
+
+  传服务器，使用支持断点续传的 rsync：
+
+  rsync -avP vllm-openai-v0.10.2.tar casia@服务器IP:/mnt/local4t/cjy/
+
+  服务器加载：
+
+  docker load -i /mnt/local4t/cjy/vllm-openai-v0.10.2.tar
+
+  这个方案最稳，因为 rsync 断了可以继续，不会像 Docker pull 那样大层重下。
